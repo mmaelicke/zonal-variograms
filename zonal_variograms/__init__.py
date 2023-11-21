@@ -1,0 +1,1 @@
+from zonal_variograms.__version__ import __version__
