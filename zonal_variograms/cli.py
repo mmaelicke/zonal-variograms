@@ -24,10 +24,12 @@ from zonal_variograms.main import add_variograms_to_segmentation
 @click.option('--quiet', default=False, is_flag=True, help="Suppress all output.")
 @click.option('--add-data-uri', default=False, is_flag=True, help="Add the zone as image and the variogram as image to the properties. Slows everything down.")
 @click.option('--output-file', default=None, help="The output file to write the results to. If empty, the results will be written to the segments file.")
+@click.option('--skip-img', default=False, is_flag=True, help="Skip the creation of the images. This is useful if you only want the result files")
+@click.option('--add-json', default=False, is_flag=True, help="Output the data into a json file for each layer as well.")
 @click.argument('raster')
 @click.argument('segments')
 @click.pass_context
-def process_segmented_files(ctx, ignore_crs, sample, seed, model, n_lags, maxlag, use_nugget, quiet, add_data_uri, output_file, raster, segments):
+def process_segmented_files(ctx, ignore_crs, sample, seed, model, n_lags, maxlag, use_nugget, quiet, add_data_uri, output_file, skip_img, add_json, raster, segments):
     """
     Calculate zonal variograms of RASTER for each segment in SEGMENTS.
 
@@ -53,9 +55,11 @@ def process_segmented_files(ctx, ignore_crs, sample, seed, model, n_lags, maxlag
     
     # build a basename for the output
     if output_file is None:
-        output_file = os.path.join(os.path.dirname(segments), f"{Path(segments).stem}_with_variograms.gpkg")
+        output_file = os.path.join(os.path.dirname(segments),Path(segments).stem , f"{Path(segments).stem}_with_variograms.gpkg")
     if not output_file.endswith('.gpkg'):
         output_file = os.path.join(output_file, f"{Path(output_file).stem}_with_variograms.gpkg")
+    if not os.path.exists(os.path.dirname(output_file)):
+        os.makedirs(os.path.dirname(output_file), exist_ok=True)
 
     # some stats about the raster
     if not quiet:
@@ -123,7 +127,7 @@ def process_segmented_files(ctx, ignore_crs, sample, seed, model, n_lags, maxlag
             continue
 
         # if data uri are not added, we create two new folders
-        if not add_data_uri:
+        if not skip_img:
             # create a folder for the clips
             clip_folder = os.path.join(os.path.dirname(output_file), layername, 'clips')
             os.makedirs(clip_folder, exist_ok=True)
@@ -151,6 +155,14 @@ def process_segmented_files(ctx, ignore_crs, sample, seed, model, n_lags, maxlag
         if ignore_crs:
             # force into same CRS as raster
             vario_segments.set_crs(raster.crs, inplace=True, allow_override=True)
+        
+                # create json files if needed
+        if add_json:
+            # path 
+            json_folder = os.path.join(os.path.dirname(output_file), 'json')
+            if not os.path.exists(json_folder):
+                os.makedirs(json_folder, exist_ok=True)
+            vario_segments.to_file(os.path.join(json_folder, f"{layername}.json"), driver='GeoJSON')
         
         # figure out the write mode
         vario_segments.to_file(output_file, driver='GPKG', layer=layername)
