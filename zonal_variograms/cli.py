@@ -10,7 +10,7 @@ from fiona.errors import DriverError
 from pyproj import CRS
 import matplotlib.pyplot as plt
 
-from zonal_variograms.main import add_variograms_to_segmentation
+from zonal_variograms.main import add_variograms_to_segmentation, get_raster_band
 
 
 @click.command(context_settings=dict(help_option_names=['-h', '--help'], ignore_unknown_options=True, allow_extra_args=True))
@@ -23,13 +23,15 @@ from zonal_variograms.main import add_variograms_to_segmentation
 @click.option('--use-nugget', default=False, is_flag=True, help="Use a nugget for the model")
 @click.option('--quiet', default=False, is_flag=True, help="Suppress all output.")
 @click.option('--add-data-uri', default=False, is_flag=True, help="Add the zone as image and the variogram as image to the properties. Slows everything down.")
+@click.option('--add-clip', default=False, is_flag=True, help="Add the clipped zone as image to the properties. Slows everything down.")
+@click.option('--use-band', default=0, type=int, help="The band to use from the raster dataset. Defaults to 0.")
 @click.option('--output-file', default=None, help="The output file to write the results to. If empty, the results will be written to the segments file.")
 @click.option('--skip-img', default=False, is_flag=True, help="Skip the creation of the images. This is useful if you only want the result files")
 @click.option('--add-json', default=False, is_flag=True, help="Output the data into a json file for each layer as well.")
 @click.argument('raster')
 @click.argument('segments')
 @click.pass_context
-def process_segmented_files(ctx, ignore_crs, sample, seed, model, n_lags, maxlag, use_nugget, quiet, add_data_uri, output_file, skip_img, add_json, raster, segments):
+def process_segmented_files(ctx, ignore_crs, sample, seed, model, n_lags, maxlag, use_nugget, quiet, add_data_uri, add_clip, use_band, output_file, skip_img, add_json, raster, segments):
     """
     Calculate zonal variograms of RASTER for each segment in SEGMENTS.
 
@@ -121,7 +123,7 @@ def process_segmented_files(ctx, ignore_crs, sample, seed, model, n_lags, maxlag
 
         # this is the actual implementation
         try:
-            vario_segments, clips, variograms = add_variograms_to_segmentation(raster, segment, n=sample, seed=seed, quiet=quiet, add_data_uri=add_data_uri, **vario_params)
+            vario_segments, clips, transforms, variograms = add_variograms_to_segmentation(raster, segment, n=sample, seed=seed, quiet=quiet, add_data_uri=add_data_uri, **vario_params)
         except Exception as e:
             click.echo(f"ERROR on layer {layername}: {str(e)}")
             continue
@@ -139,7 +141,8 @@ def process_segmented_files(ctx, ignore_crs, sample, seed, model, n_lags, maxlag
             # save the clips
             for i, clip in enumerate(clips):
                 clip_file = os.path.join(clip_folder, f"{layername}_clip_{i + 1}.png")
-                ax = plt.imshow(clip)
+                img = get_raster_band(clip, use_band=use_band)
+                ax = plt.imshow(img)
                 ax.get_figure().savefig(clip_file, dpi=80)
                 plt.close()
 
@@ -150,7 +153,30 @@ def process_segmented_files(ctx, ignore_crs, sample, seed, model, n_lags, maxlag
                 plt.gcf().savefig(variogram_file, dpi=80)
                 plt.close()
 
-        
+        # If required, save back the clips
+        if add_clip:
+            # create a output raster folder
+            zone_folder = os.path.join(os.path.dirname(output_file), layername, 'zones')
+            os.makedirs(zone_folder, exist_ok=True)
+
+            # go for each combination of clip and transform for each zone
+            for i, (clip, transform) in enumerate(zip(clips, transforms)):
+                # copy the metadata from the original raster
+                out_meta = raster.meta
+                
+                # update the metadata
+                out_meta.update({
+                    "driver": "GTiff",
+                    "height": clip.shape[1],
+                    "width": clip.shape[2],
+                    "transform": transform
+                })
+
+                # write to file
+                zone_name = os.path.join(zone_folder, f"{layername}_zone_{i + 1}.tif")
+                with rasterio.open(zone_name, "w", **out_meta) as dest:
+                    dest.write(clip)
+
         # finally save the layer back
         if ignore_crs:
             # force into same CRS as raster

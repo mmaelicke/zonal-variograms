@@ -13,7 +13,7 @@ import matplotlib.pyplot as plt
 from zonal_variograms.util import mpl_to_base64
 
 
-def clip_features(raster: rasterio.DatasetReader, features: gpd.GeoDataFrame, quiet: bool = False) -> List[np.ndarray]:
+def clip_features(raster: rasterio.DatasetReader, features: gpd.GeoDataFrame, quiet: bool = False) -> Tuple[List[np.ndarray], list]:
     """
     Clips the raster dataset using the geometries from the GeoDataFrame.
 
@@ -38,19 +38,34 @@ def clip_features(raster: rasterio.DatasetReader, features: gpd.GeoDataFrame, qu
     else:
         _iterator = tqdm(features.geometry)
     
+    # create result containers
     clipped_arrays = []
+    clipped_transforms = []
+
     for geometry in _iterator:
         # clip the feature
-        clipped_array, _ = mask(raster, [geometry], crop=True)
+        clipped_array, clipped_transform = mask(raster, [geometry], crop=True)
         
-        # these features may come out as 3D arrays
-        if clipped_array.shape[0] == 1:
-            # drop the first dimension
-            clipped_array = clipped_array[0]
+        # append the results
         clipped_arrays.append(clipped_array)
+        clipped_transforms.append(clipped_transform)
 
     # return features
-    return clipped_arrays
+    return clipped_arrays, clipped_transforms
+
+
+def get_raster_band(arr: np.ndarray, use_band: int = 0) -> np.ndarray:
+    """
+    Extract a single band at index `use_band` from a raster array.
+    """
+    # check if the array is 3D
+    if len(arr.shape) == 3:
+        # get the correct band
+        return arr[use_band]
+    elif len(arr.shape) > 3:
+        raise ValueError(f'Array has more than 3 dimensions. Got {len(arr.shape)} dimensions. Sorry cannot handle that.')
+    else:
+        return arr
 
 def raster_variogram(raster: np.ndarray, **vario_params) -> skg.Variogram:
     """
@@ -80,7 +95,8 @@ def raster_variogram(raster: np.ndarray, **vario_params) -> skg.Variogram:
 
     # calculate the variogram
     return skg.Variogram(coords, z, **vario_params)
-    
+
+
 def raster_sample_variogram(raster: np.ndarray, n: int = 1000, seed: int = 1312, **vario_params) -> skg.Variogram:
     """
     Calculates the sample variogram for a raster dataset.
@@ -127,6 +143,7 @@ def estimate_empirical_variogram(
     n: Optional[int] = 1000,
     seed: int = 1312,
     quiet: bool = False,
+    use_band: int = 0,
     **vario_params
 ) -> List[skg.Variogram]:
     """
@@ -142,6 +159,8 @@ def estimate_empirical_variogram(
         The seed for the random number generator. Defaults to 1312.
     quiet : bool, optional
         Whether to display progress bar. Defaults to False.
+    use_band : int, optional
+        The band to use from the raster dataset. Defaults to 0.
     **vario_params : dict
         Additional parameters for the skgstat.Variogram class.
 
@@ -161,11 +180,11 @@ def estimate_empirical_variogram(
     if isinstance(raster, (list, tuple)):
         # iterate over the rasters
         if quiet:
-            return [vario_func(arr) for arr in raster]
+            return [vario_func(get_raster_band(arr, use_band=use_band)) for arr in raster]
         else:
-            return [vario_func(arr) for arr in tqdm(raster)]
+            return [vario_func(get_raster_band(arr, use_band=use_band)) for arr in tqdm(raster)]
     else:
-        return vario_func(raster)
+        return vario_func(get_raster_band(raster, use_band=use_band))
 
 
 def add_variograms_to_segmentation(
@@ -176,8 +195,9 @@ def add_variograms_to_segmentation(
     quiet: bool = False,
     inplace: bool = False,
     add_data_uri: bool = False,
+    use_band: int = 0,
     **vario_params
-) -> Tuple[gpd.GeoDataFrame, List[np.ndarray], List[skg.Variogram]]:
+) -> Tuple[gpd.GeoDataFrame, List[np.ndarray], list, List[skg.Variogram]]:
     """
     Adds variogram parameters to a segmentation geopackage.
 
@@ -198,6 +218,8 @@ def add_variograms_to_segmentation(
         Whether to modify the input GeoDataFrame inplace. Defaults to False.
     add_data_uri : bool, optional
         Whether to add data uris for the variograms and cropped images. Defaults to False.
+    use_band : int, optional
+        The band to use from the raster dataset. Defaults to 0.
     **vario_params : dict
         Additional parameters for the skgstat.Variogram class.
 
@@ -208,7 +230,7 @@ def add_variograms_to_segmentation(
 
     """
     # first, clip the raster features
-    clipped_arrays = clip_features(raster, features, quiet=quiet)
+    clipped_arrays, clipped_transforms = clip_features(raster, features, quiet=quiet)
 
     # the calculate the variograms
     variograms = estimate_empirical_variogram(clipped_arrays, n=n, seed=seed, quiet=quiet, **vario_params)
@@ -232,7 +254,8 @@ def add_variograms_to_segmentation(
         
         # plot the cropped image
         def _plot_c(arr):
-            fig = plt.imshow(arr).get_figure()
+            img = get_raster_band(arr, use_band=use_band)
+            fig = plt.imshow(img).get_figure()
             plt.tight_layout()
             uri = mpl_to_base64(fig, as_data_uri=True)
             plt.close(fig)
@@ -252,4 +275,4 @@ def add_variograms_to_segmentation(
     segments = segments.join(parameters)
 
     # finally return everything
-    return segments, clipped_arrays, variograms
+    return segments, clipped_arrays, clipped_transforms, variograms
