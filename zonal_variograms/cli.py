@@ -10,7 +10,7 @@ from fiona.errors import DriverError
 from pyproj import CRS
 import matplotlib.pyplot as plt
 
-from zonal_variograms.main import add_variograms_to_segmentation, get_raster_band
+from zonal_variograms.main import add_variograms_to_segmentation, get_raster_band, clip_features
 
 
 @click.command(context_settings=dict(help_option_names=['-h', '--help'], ignore_unknown_options=True, allow_extra_args=True))
@@ -123,7 +123,8 @@ def process_segmented_files(ctx, ignore_crs, sample, seed, model, n_lags, maxlag
 
         # this is the actual implementation
         try:
-            vario_segments, clips, transforms, variograms = add_variograms_to_segmentation(raster, segment, n=sample, seed=seed, quiet=quiet, add_data_uri=add_data_uri, **vario_params)
+            clips, transforms = clip_features(raster, segment, quiet=quiet)
+            vario_segments, variograms = add_variograms_to_segmentation(clips, segment, n=sample, seed=seed, quiet=quiet, add_data_uri=add_data_uri, **vario_params)
         except Exception as e:
             click.echo(f"ERROR on layer {layername}: {str(e)}")
             continue

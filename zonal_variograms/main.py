@@ -187,8 +187,42 @@ def estimate_empirical_variogram(
         return vario_func(get_raster_band(raster, use_band=use_band))
 
 
+def univariate_statistics(arr: Union[np.ndarray, List[np.ndarray]], spread_dimensions: bool = False, axis: Optional[int] = None, use_band: int = 0) -> List[np.ndarray]:
+    """
+    Calculates the univariate statistics for one or multiple raster datasets.
+    """
+    # check if only one array was given
+    if isinstance(arr, np.ndarray):
+        arr = [arr]
+    
+    # convert to np array
+    arr = np.asarray(arr)
+    
+    # create a result container
+    # results = np.ones((len(arr), 5), dtype=float) * np.nan
+    results = []
+
+    # go for each polygon
+    for i, layer in enumerate(arr):
+        # only use the first band or spread the across all bands
+        if not spread_dimensions:
+            layer = get_raster_band(layer, use_band=use_band)
+
+        # calculate the statistics
+        results.append(np.asarray([
+            layer.mean(axis=axis),
+            layer.std(axis=axis),
+            layer.min(axis=axis),
+            layer.max(axis=axis),
+            layer.sum(axis=axis)
+        ]))
+    
+    # return the results
+    return results
+
+
 def add_variograms_to_segmentation(
-    raster: rasterio.DatasetReader,
+    clipped_arrays: Union[np.ndarray, List[np.ndarray]],
     features: gpd.GeoDataFrame,
     n: Optional[int] = 1000,
     seed: int = 1312,
@@ -197,14 +231,14 @@ def add_variograms_to_segmentation(
     add_data_uri: bool = False,
     use_band: int = 0,
     **vario_params
-) -> Tuple[gpd.GeoDataFrame, List[np.ndarray], list, List[skg.Variogram]]:
+) -> Tuple[gpd.GeoDataFrame, list, List[skg.Variogram]]:
     """
     Adds variogram parameters to a segmentation geopackage.
 
     Parameters
     ----------
-    raster : rasterio.DatasetReader
-        The raster dataset.
+    clipped_arrays : Union[np.ndarray, List[np.ndarray]]
+        The clipped raster arrays.
     features : gpd.GeoDataFrame
         The segmentation layer.
     n : int, optional
@@ -229,9 +263,6 @@ def add_variograms_to_segmentation(
         The updated GeoDataFrame, the list of cropped arrays, and the list of variograms.
 
     """
-    # first, clip the raster features
-    clipped_arrays, clipped_transforms = clip_features(raster, features, quiet=quiet)
-
     # the calculate the variograms
     variograms = estimate_empirical_variogram(clipped_arrays, n=n, seed=seed, quiet=quiet, **vario_params)
 
@@ -275,4 +306,4 @@ def add_variograms_to_segmentation(
     segments = segments.join(parameters)
 
     # finally return everything
-    return segments, clipped_arrays, clipped_transforms, variograms
+    return segments, variograms
