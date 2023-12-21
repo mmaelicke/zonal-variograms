@@ -1,4 +1,7 @@
 geopandas
 rasterio
+rioxarray
 scikit-gstat
 click
+typing_extensions
+joblib>=1.3
