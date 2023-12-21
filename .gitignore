@@ -162,3 +162,5 @@ cython_debug/
 # project settings
 dev
 .DS_Store
+.vscode
+playground.ipynb
