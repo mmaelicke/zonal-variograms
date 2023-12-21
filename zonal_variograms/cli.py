@@ -5,15 +5,19 @@ import click
 import rasterio
 from rasterio.errors import RasterioIOError
 import geopandas as gpd
+import pandas as pd
 import fiona
+import netCDF4
 from fiona.errors import DriverError
 from pyproj import CRS
 import matplotlib.pyplot as plt
+import numpy as np
 
-from zonal_variograms.main import add_variograms_to_segmentation, get_raster_band, clip_features
+from zonal_variograms.backend.rasterio import add_variograms_to_segmentation, add_univariate_to_segmentation, get_raster_band, clip_features
 
 
 @click.command(context_settings=dict(help_option_names=['-h', '--help'], ignore_unknown_options=True, allow_extra_args=True))
+@click.option('--dtype', default=None, type=str, help='Unsafe cast the raster to this dtype. If empty, the original data type of the raster will be used.')
 @click.option('--ignore-crs', default=False, is_flag=True, help="Ignore the CRS of the raster and the segments. This may lead to wrong results. Can be used for non-referenced files.")
 @click.option('--sample', default=None, type=int, help="Sample size to sample the zones for the variograms. If empty, all data will be used.")
 @click.option('--seed', default=None, type=int, help="Seed for the random number generator if zones are resampled.")
@@ -22,16 +26,17 @@ from zonal_variograms.main import add_variograms_to_segmentation, get_raster_ban
 @click.option('--maxlag', default=None, help="The maximum search distance for the variogram")
 @click.option('--use-nugget', default=False, is_flag=True, help="Use a nugget for the model")
 @click.option('--quiet', default=False, is_flag=True, help="Suppress all output.")
-@click.option('--add-data-uri', default=False, is_flag=True, help="Add the zone as image and the variogram as image to the properties. Slows everything down.")
 @click.option('--add-clip', default=False, is_flag=True, help="Add the clipped zone as image to the properties. Slows everything down.")
-@click.option('--use-band', default=0, type=int, help="The band to use from the raster dataset. Defaults to 0.")
+@click.option('--use-band', default=None, type=(int, str), help="The band to use from the raster dataset. Defaults to 0.")
 @click.option('--output-file', default=None, help="The output file to write the results to. If empty, the results will be written to the segments file.")
+@click.option('--stats-to-file', default=False, is_flag=True, help="Write the univariate statistics to a CSV file. This is useful if you do not want to aggregate bands to a single number per feature.")
+@click.option('--axis', default=None, type=int, multiple=True, help="The axis for band aggregation within a clip feature, to aggregate along that axis. Defaults to None for full aggregation. Can be passed multiple times.")
 @click.option('--skip-img', default=False, is_flag=True, help="Skip the creation of the images. This is useful if you only want the result files")
 @click.option('--add-json', default=False, is_flag=True, help="Output the data into a json file for each layer as well.")
 @click.argument('raster')
 @click.argument('segments')
 @click.pass_context
-def process_segmented_files(ctx, ignore_crs, sample, seed, model, n_lags, maxlag, use_nugget, quiet, add_data_uri, add_clip, use_band, output_file, skip_img, add_json, raster, segments):
+def process_segmented_files(ctx, dtype, ignore_crs, sample, seed, model, n_lags, maxlag, use_nugget, quiet, add_clip, use_band, output_file, stats_to_file, axis, skip_img, add_json, raster, segments):
     """
     Calculate zonal variograms of RASTER for each segment in SEGMENTS.
 
@@ -41,6 +46,7 @@ def process_segmented_files(ctx, ignore_crs, sample, seed, model, n_lags, maxlag
     identifying the zones. If more than one layer is found, the statistics will be calculated for 
     all of them.
     """
+    raise NotImplementedError("The CLI has to be updated to the new API first. Sorry.")
     # open the raster
     try:
         raster: rasterio.DatasetReader = rasterio.open(raster)
@@ -123,11 +129,50 @@ def process_segmented_files(ctx, ignore_crs, sample, seed, model, n_lags, maxlag
 
         # this is the actual implementation
         try:
-            clips, transforms = clip_features(raster, segment, quiet=quiet)
-            vario_segments, variograms = add_variograms_to_segmentation(clips, segment, n=sample, seed=seed, quiet=quiet, add_data_uri=add_data_uri, **vario_params)
+            clips, transforms = clip_features(raster, segment, nomask=False, dtype=dtype, quiet=quiet)
         except Exception as e:
-            click.echo(f"ERROR on layer {layername}: {str(e)}")
+            click.echo(f"ERROR clipping layer {layername}: {str(e)}")
             continue
+        
+        # do the univariate statistics
+        try:
+            uni_segments, uni_stats = add_univariate_to_segmentation(clips, segment, add_to_features=not stats_to_file, axis=axis, use_band=use_band)
+        except Exception as e:
+            click.echo(f"ERROR univariate statistics calculation for layer {layername}: {str(e)}")
+            continue
+
+        # do the variograms
+        try:
+            vario_segments, variograms, parameters = add_variograms_to_segmentation(clips, uni_segments, n=sample, seed=seed, quiet=quiet, **vario_params)
+        except Exception as e:
+            click.echo(f"ERROR variogram calculation for layer {layername}: {str(e)}")
+            continue
+
+        # check if we want to save the univariate statistics to file
+        if stats_to_file:
+            # stats folder
+            stats_folder = os.path.join(os.path.dirname(output_file), layername, 'stats')
+            os.makedirs(stats_folder, exist_ok=True)
+
+            # save the stats
+            for i, stat in enumerate(uni_stats):
+                # first check the dimensions, because it could be broadcasted along two axes
+                if stat.ndim != 2:
+                    # build the filename
+                    stat_file = os.path.join(stats_folder, f"{layername}_stats_{i + 1}.txt")
+                    np.savetxt(stat_file, stat)
+                else:
+                    # we can go for a csv
+                    stat_file = os.path.join(stats_folder, f"{layername}_stats_{i + 1}.csv")
+                    
+                    # handle the case, where the bands were preserved (ie depth, height, time)
+                    # this will result as a 5xN array, where the first dimension is the orignal information coded in the bands
+                    if stat.shape[1] == 5:
+                        stat = stat.T
+                    
+                    # make the dataframe
+                    df = pd.DataFrame(stat, columns=['mean', 'std', 'min', 'max', 'sum'])
+                    df.to_csv(stat_file, index=False)
 
         # if data uri are not added, we create two new folders
         if not skip_img:
@@ -148,6 +193,7 @@ def process_segmented_files(ctx, ignore_crs, sample, seed, model, n_lags, maxlag
                 plt.close()
 
             # save the variograms
+            # TODO, if this is a List of List with more than one, build a new folder structure
             for i, variogram in enumerate(variograms):
                 variogram_file = os.path.join(variogram_folder, f"{layername}_variogram_{i + 1}.png")
                 ax = variogram.plot()

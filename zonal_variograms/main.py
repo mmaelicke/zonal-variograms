@@ -1,430 +1,186 @@
-from typing import List, Union, Optional, Tuple
-from typing_extensions import Literal
+from typing import List, Tuple, Optional, Union, Literal
+import warnings
 
-import rasterio
-import pandas as pd
-import geopandas as gpd
-import numpy as np
 from tqdm import tqdm
-import skgstat as skg
-import rasterio
-from rasterio.mask import mask
-import matplotlib.pyplot as plt
+from xarray import Dataset
+import geopandas as gpd
+import pandas as pd
+import numpy as np
+from geocube.api.core import make_geocube
+from rasterio.errors import ShapeSkipWarning
+from joblib import delayed, Parallel
 
-from zonal_variograms.util import mpl_to_base64
 
-
-def clip_features(raster: rasterio.DatasetReader, features: gpd.GeoDataFrame, nomask: bool = False, dtype: str = None, quiet: bool = False) -> Tuple[List[np.ndarray], list]:
-    """
-    Clips the raster dataset using the geometries from the GeoDataFrame.
-
-    Parameters
-    ----------
-    raster : rasterio.DatasetReader
-        The raster dataset to be clipped.
-    features : gpd.GeoDataFrame
-        The GeoDataFrame containing the geometries for clipping.
-    nomask bool, optional
-        If set to `False` (default), the output arrays will be masked numpy 
-        arrays, masked yb the raster nodata value. If set to `True`, an ordinary
-        numpy array will be returned.
-    dtype : str, optional
-        The data type of the output array, as respresented by the data, not the actual used
-        data type of the source. If this is not `None`, the specified dtype will be used to
-        unpack the data values in a unsafe way, by scaling and offsetting it with the 
-        scale and offset as specified in the raster metadata.
-        This is frequently used in large raster files (ERA5-Land) to save space (by storing
-        2 byte values, which are shifted to a float32).
-        Defaults to `None`. 
-    quiet : bool, optional
-        Whether to display progress bar. Defaults to False.
-
-    Returns
-    -------
-    List[np.ndarray]
-        A list of clipped arrays.
-    """
-    # function implementation...
-    # build an iterator
-    if quiet:
-        _iterator = features.geometry
-    else:
-        _iterator = tqdm(features.geometry)
+def add_oid_overlay(raster: Dataset, features: gpd.GeoDataFrame, oid: str = 'oid') -> Dataset:
+    # make sure the Dataset has the rioxarray extension installed
+    if not hasattr(raster, 'rio'):
+        raise ValueError('raster Dataset must be loaded with rioxarray extension installed. Install with `pip install rioxarray`')
     
-    # create result containers
-    clipped_arrays = []
-    clipped_transforms = []
+    # right now, oid literal cannot be changed
+    if oid != 'oid':
+        raise NotImplementedError("oid has to be the literal 'oid' and cannot be changed. This will change with a future version")
+    
+    # check if the features have an id column
+    if 'oid' not in features.columns:
+        features['oid'] = range(len(features))
 
-    for geometry in _iterator:
-        # clip the feature
-        clipped_array, clipped_transform = mask(raster, [geometry], crop=True)
+    # rasterize the features
+    cube = make_geocube(
+        vector_data=features,
+        measurements=[oid],
+        like=raster
+    )
+
+    # add all the variables from the raster to the cube
+    for var in raster.data_vars:
+        cube[var] = raster[var]
+    
+    # return the cube
+    return cube
+
+
+def spread_oid_from_dataset(cube: Dataset, oid: str = 'oid') -> List[Dataset]:
+    # right now, oid literal cannot be changed
+    if oid != 'oid':
+        raise NotImplementedError("oid has to be the literal 'oid' and cannot be changed. This will change with a future version")
+
+    # get a list of all unique ids
+    clip_datasets = []
+    # go for each unique id
+    for oid in np.unique(cube.oid.data):
+        # crop the cube
+        cube_slice = cube.where(cube.oid == oid)
+
+        # dropna along all axes
+        for dim in cube_slice.dims.keys():
+            cube_slice.dropna(dim, how='all', inplace=True)
         
-        # append the results
-        clipped_transforms.append(clipped_transform)
-
-        # check if we need to mask the array
-        if not nomask:
-            clipped_array = np.ma.masked_values(clipped_array, raster.nodata)
-
-        # check if the value space needs to be shifted
-            # for some sources (ie. ERA5) we need to unpack the 2byte data into floats by using scale and offset raster metadata
-        if dtype is not None:
-            clipped_array = np.add(np.multiply(clipped_array.astype(dtype, casting="unsafe"), raster.scales[0], casting="unsafe"), raster.offsets[0], casting="unsafe")
-
-        # append the array
-        clipped_arrays.append(clipped_array)
-
-    # return features
-    return clipped_arrays, clipped_transforms
-
-
-def get_raster_band(arr: np.ndarray, use_band: int = 0) -> np.ndarray:
-    """
-    Extract a single band at index `use_band` from a raster array.
-    """
-    # check if the array is 3D
-    if len(arr.shape) == 3:
-        # get the correct band
-        return arr[use_band]
-    elif len(arr.shape) > 3:
-        raise ValueError(f'Array has more than 3 dimensions. Got {len(arr.shape)} dimensions. Sorry cannot handle that.')
-    else:
-        return arr
-
-
-def raster_variogram(raster: np.ndarray, **vario_params) -> skg.Variogram:
-    """
-    Calculates the variogram for a raster dataset.
-
-    Parameters
-    ----------
-    raster : np.ndarray
-        The raster dataset.
-    **vario_params : dict
-        Additional parameters for the skgstat.Variogram class.
-
-    Returns
-    -------
-    skg.Variogram
-        The calculated variogram.
-    """
-    # function implementation...
-    # span a meshgrid over both axes
-    x, y = np.meshgrid(np.arange(raster.shape[1]), np.arange(raster.shape[0]))
-
-    # stack into a coordinate array
-    coords = np.stack([x.flatten(), y.flatten()], axis=-1)
-
-    # get the values from the raster
-    z = raster.flatten()
-
-    # calculate the variogram
-    return skg.Variogram(coords, z, **vario_params)
-
-
-def raster_sample_variogram(raster: np.ndarray, n: int = 1000, seed: int = 1312, **vario_params) -> skg.Variogram:
-    """
-    Calculates the sample variogram for a raster dataset.
-
-    Parameters
-    ----------
-    raster : np.ndarray
-        The raster dataset.
-    n : int, optional
-        The number of samples to use for calculating the variogram. Defaults to 1000.
-    seed : int, optional
-        The seed for the random number generator. Defaults to 1312.
-    **vario_params : dict
-        Additional parameters for the skgstat.Variogram class.
-
-    Returns
-    -------
-    skg.Variogram
-        The sample variogram.
-    """
-    # function implementation...
-    # span a meshgrid over both axes
-    x, y = np.meshgrid(np.arange(raster.shape[1]), np.arange(raster.shape[0]))
-
-    # stack into a coordinate array
-    coords = np.stack([x.flatten(), y.flatten()], axis=-1)
-
-    # get the values from the raster
-    z = raster.flatten()
-
-    # build an index over the values
-    idx = np.arange(len(z))
-
-    # shuffle the idx in place using a seeded rng
-    rng = np.random.default_rng(seed)
-    rng.shuffle(idx)
-
-    # calculate the variogram on the n first shuffled values
-    return skg.Variogram(coords[idx[:n]], z[idx[:n]], **vario_params)
-
-
-def estimate_empirical_variogram(
-    raster: Union[np.ndarray, List[np.ndarray]],
-    n: Optional[int] = 1000,
-    seed: int = 1312,
-    quiet: bool = False,
-    use_band: Optional[Union[Literal['all'], int]] = None,
-    np_agg = np.mean,
-    **vario_params
-) -> List[List[skg.Variogram]]:
-    """
-    Estimates the empirical variogram for one or multiple raster datasets.
-
-    Parameters
-    ----------
-    raster : Union[np.ndarray, List[np.ndarray]]
-        The raster dataset(s).
-    n : int, optional
-        The number of samples to use for calculating the variogram. Defaults to 1000.
-    seed : int, optional
-        The seed for the random number generator. Defaults to 1312.
-    quiet : bool, optional
-        Whether to display progress bar. Defaults to False.
-    use_band : int, optional
-        The band to use from the raster dataset. Defaults to 0.
-    **vario_params : dict
-        Additional parameters for the skgstat.Variogram class.
-
-    Returns
-    -------
-    List[skg.Variogram]
-        A list of empirical variograms.
-    """
-    # check the type of the input raster
-    if isinstance(raster, np.ndarray):
-        raster = [raster]
-
-    # determine the correct variogram function
-    if n is None:
-        vario_func = raster_variogram
-    else:
-        vario_func = lambda arr: raster_sample_variogram(arr, n=n, seed=seed, **vario_params)
+        # append the cropped cube to the list
+        clip_datasets.append(cube_slice)
     
-    # output container
-    variograms = []
+    # return the list
+    return clip_datasets
 
-    # build and iterator
-    if quiet:
-        _iterator = raster
-    else:
-        _iterator = tqdm(raster)
+
+def clip_features_from_dataset(
+    raster: Dataset,
+    features: gpd.GeoDataFrame, 
+    oid: str = 'oid', 
+    use_oids: Optional[Union[int, List[int]]] = None, 
+    n_jobs: Optional[int] = None,
+    quiet: bool = False
+) -> List[Dataset]:
+    # make sure the Dataset has the rioxarray extension installed
+    if not hasattr(raster, 'rio'):
+        raise ValueError('raster Dataset must be loaded with rioxarray extension installed. Install with `pip install rioxarray`')
     
-    # go for each band in the raster
-    for arr in _iterator:
-        # only use the first band or spread the across all bands
-        if use_band is None:
-            # aggregate along the first axis, if dimension is larger than 2
-            if arr.ndim > 2:
-                arr = np_agg(arr, axis=0)
-            variograms.append([vario_func(arr)])
-        
-        # we use only a single band
-        if isinstance(use_band, int):
-            variograms.append([vario_func(get_raster_band(arr, use_band=use_band))])
-        
-        if isinstance(use_band, str) and use_band == 'all':
-            # always just iterate along the axis 0 and create a variogram for each slice
-            variograms.append([vario_func(get_raster_band(arr, use_band=i)) for i in range(arr.shape[0])])
+    # right now, oid literal cannot be changed
+    if oid != 'oid':
+        raise NotImplementedError("oid has to be the literal 'oid' and cannot be changed. This will change with a future version")
 
-        else:
-            raise AttributeError(f"Invalid value for `use_band`. Got {use_band}. Must be either `None`, `int`, or `'all'`.")
-    
-    # return the variograms
-    return variograms
+    # check if the features have an id column
+    if oid not in features.columns:
+        features[oid] = range(len(features))
 
+    # build a handler function to clip the featues at one index
+    def _handler(_oid: Union[int, float]) -> Dataset:
+        geom = features.where(features[oid] == _oid).dropna().geometry.values.tolist()
+        clip = raster.copy().rio.clip(geom, features.crs, drop=True, invert=False)
 
-def univariate_statistics(arr: Union[np.ndarray, List[np.ndarray]], axis: Optional[int] = None, use_band: Optional[int] = None) -> List[np.ndarray]:
-    """
-    Calculates the univariate statistics for one or multiple raster datasets.
-    """
-    # check if only one array was given
-    if isinstance(arr, np.ndarray):
-        arr = [arr]
-    
-    # create a result container
-    # results = np.ones((len(arr), 5), dtype=float) * np.nan
-    results = []
-
-    # go for each polygon
-    for i, layer in enumerate(arr):
-        # only use the first band or spread the across all bands
-        if use_band is not None:
-            layer = get_raster_band(layer, use_band=use_band)
-
-        # calculate the statistics
-        results.append(np.asarray([
-            layer.mean(axis=axis),
-            layer.std(axis=axis),
-            layer.min(axis=axis),
-            layer.max(axis=axis),
-            layer.sum(axis=axis)
-        ]))
-    
-    # return the results
-    return results
-
-
-def add_univariate_to_segmentation(
-    clipped_arrays: Union[np.ndarray, List[np.ndarray]],
-    features: gpd.GeoDataFrame,
-    add_to_features: bool = True,
-    inplace: bool = False,
-    use_band: Optional[Union[Literal['all'], int]] = None,
-) -> Tuple[gpd.GeoDataFrame, List[np.ndarray]]:
-    """"""
-    # reduce each slice into a single value or reduce along the first axis
-    # first calculate the univariate statistics
-    
-    # aggregate to univariate distribution moments along all axes
-    if use_band is None:
-        stats = univariate_statistics(clipped_arrays, axis=None, use_band=None)
-    
-    # aggregate to univariate distribution moments for only one band
-    elif isinstance(use_band, int):
-        stats = univariate_statistics(clipped_arrays, axis=None, use_band=use_band)
-    
-    # go for all bands and reduce to series of moments along the first axis
-    elif isinstance(use_band, str) and use_band == 'all':
-        # only preserve the first axis
-        axis = tuple([dim for dim in range(clipped_arrays[0].ndim) if dim != 0])
-        stats = univariate_statistics(clipped_arrays, axis=axis, use_band=None)
-    
-    # TODO: here we could add spatially distributed statistical moment (mean in each cell etc)
-
-    else:
-        raise AttributeError(f"Invalid value for `use_band`. Got {use_band}. Must be either `None`, `int`, or `'all'`.")
-
-    # get the standard names
-    colnames = ['mean', 'std', 'min', 'max', 'sum']
-    
-    # check if we are forced to not add to features
-    if not add_to_features:
-        return features, stats
-    
-    # check if there are too many dimensions on the result
-    if np.asarray(stats[0]).size != 5:
-        # if we spread dimensions, do it and add, if not, skip the adding part
-        if stats[0][0].size % 5 == 0:
-            # get the output dimension
-            out_dim = stats[0][0].shape[0]
-
-            # reorder the data
-            stats = [np.asarray(row).resize(out_dim * 5, 1).flatten() for row in stats]
-            colnames = [f"{name}_{i + 1}" for name in colnames for i in range(out_dim)]
-
-        else:
-            # just return
-            return features, stats
-
-    # create the dataframe
-    statistics = pd.DataFrame(data=stats, columns=colnames)
-
-    # copy the input data if not inplace
-    if not inplace:
-        segments = features.copy()
-    else:
-        segments = features
-    
-    # add the parameters to the segments
-    segments = segments.join(statistics)
-
-    # finally return everything
-    return segments, stats
-
-
-def add_variograms_to_segmentation(
-    clipped_arrays: Union[np.ndarray, List[np.ndarray]],
-    features: gpd.GeoDataFrame,
-    add_to_features: bool = True,
-    n: Optional[int] = 1000,
-    seed: int = 1312,
-    quiet: bool = False,
-    inplace: bool = False,
-    use_band: Optional[Union[Literal['all'], int]] = None,
-    **vario_params
-) -> Tuple[gpd.GeoDataFrame, List[List[skg.Variogram]], List[np.ndarray]]:
-    """
-    Adds variogram parameters to a segmentation geopackage.
-
-    Parameters
-    ----------
-    clipped_arrays : Union[np.ndarray, List[np.ndarray]]
-        The clipped raster arrays.
-    features : gpd.GeoDataFrame
-        The segmentation layer.
-    add_to_features : bool, optional
-        Whether to add the variogram parameters to the features. Defaults to True.
-    n : int, optional
-        The number of samples to use for calculating the variogram. Defaults to 1000. 
-        If None, all data will be used. Caution: that can turn out to be a lot of data.
-    seed : int, optional
-        The seed for the random number generator. Defaults to 1312.
-    quiet : bool, optional
-        Whether to display progress bar. Defaults to False.
-    inplace : bool, optional
-        Whether to modify the input GeoDataFrame inplace. Defaults to False.
-    use_band : int, 'all', optional
-        The band to use from the raster dataset. Defaults to None.
-    **vario_params : dict
-        Additional parameters for the skgstat.Variogram class.
-
-    Returns
-    -------
-    Tuple[gpd.GeoDataFrame, List[List[skg.Variogram]], List[np.ndarray]]
-        The updated GeoDataFrame, the list of variograms and the list of the variogram parameters.
-
-    """
-    # the calculate the variograms
-    features_variograms = estimate_empirical_variogram(clipped_arrays, n=n, seed=seed, quiet=quiet, use_band=use_band, **vario_params)
-
-    # Each feature can either have one, or many variograms (for all bands)
-    if isinstance(use_band, str) and use_band == 'all':
-        # handle multiple variograms
-        parameters = []
-        for variograms in features_variograms:
-            # get the parameters
-            param = np.asarray([v.parameters for v in variograms])
-            colnames = ['vario_range', 'vario_sill', 'vario_nugget'] if param.shape[1] == 3 else ['vario_range', 'vario_sill', 'vario_shape', 'vario_nugget']
-            params = pd.DataFrame(data=param, columns=colnames)
+        # make a geocube of only this feature
+        with warnings.catch_warnings():
+            # we expect skipped shapes here
+            warnings.simplefilter("ignore", category=ShapeSkipWarning)
             
-            # add nugget to sill ratio
-            params['nugget_sill_ratio'] = (params.vario_nugget / (params.vario_sill + params.vario_nugget)).round(2)
+            # make a new geocube with the catchment in it
+            cube = make_geocube(features.where(features[oid] == _oid), measurements=[oid], like=clip)
 
-            # add the r2 for each variogram
-            params['vario_r2'] = [v.r2 for v in variograms]
-            
-            parameters.append(params)
-        
-        # return 
-        return features, features_variograms, parameters
+        # add all variables to the cube
+        for var in clip.data_vars:
+            cube[var] = clip[var].copy()
+
+        # return the cube
+        return cube
+
+    # check if we need to parallelize
+    if n_jobs is None:
+        n_jobs = 1
+    
+    # build the worker and delayed function
+    worker = Parallel(n_jobs=n_jobs, return_as='list' if quiet else 'generator')
+    delayed_handler = delayed(_handler)
+    
+    # set up the input parameters
+    if use_oids is not None:
+        if not isinstance(use_oids, (list, tuple, np.ndarray)):
+            use_oids = [use_oids]
+
+        inputs = [_oid for _oid in features[oid].values if _oid in use_oids]
     else:
-        # flatten the list of variograms
-        variograms = [vars[0] for vars in features_variograms]
+        inputs = features[oid].values
 
-        # add variogram parameters to the features
-        params = np.asarray([v.parameters for v in variograms])
-        colnames = ['vario_range', 'vario_sill', 'vario_nugget'] if params.shape[1] == 3 else ['vario_range', 'vario_sill', 'vario_shape', 'vario_nugget']
-        parameters = pd.DataFrame(data=params, columns=colnames)
-        
-        # add nugget to sill ratio
-        parameters['nugget_sill_ratio'] = (parameters.vario_nugget / (parameters.vario_sill + parameters.vario_nugget)).round(2)
+    # build the iterator
+    if quiet:
+        return list(worker(delayed_handler(_oid) for _oid in inputs))
+    else:
+        return list(tqdm(worker(delayed_handler(_oid) for _oid in inputs)))
 
-        # add the r2 for each variogram
-        parameters['vario_r2'] = [v.r2 for v in variograms]
 
-        # copy the input data if not inplace
-        if not inplace:
-            segments = features.copy()
+def univariate_by_oid(dataset: Dataset,  oid: str = 'oid') -> pd.DataFrame:
+    # right now, oid literal cannot be changed
+    if oid != 'oid':
+        raise NotImplementedError("oid has to be the literal 'oid' and cannot be changed. This will change with a future version")
+
+    # group the dataset
+    grouped = dataset.groupby('oid')
+
+    # create the base grouping
+    aggregates = None
+    for agg_name in ('mean', 'std', 'min', 'max', 'median', 'sum'):
+        # aggregate using the given functions
+        aggregator = getattr(grouped, agg_name)
+        agg_df = aggregator().to_dataframe().drop('spatial_ref', axis=1, errors='ignore')
+
+        # rename the columns
+        agg_df.columns = [f'{col}_{agg_name}' for col in agg_df.columns]
+
+        # check if we need to add to data or create a new one
+        if aggregates is None:
+            aggregates = agg_df.copy()
         else:
-            segments = features
-        
-        # turn add the parameters to the segments
-        segments = segments.join(parameters)
+            for col in agg_df.columns:
+                aggregates[col] = agg_df[col]
 
-        # finally return everything
-        return segments, features_variograms, parameters
+    # return 
+    return aggregates
+
+
+def add_aggregates_to_segmentation(aggregates: pd.DataFrame, segments: gpd.GeoDataFrame, oid: str = 'oid') -> Tuple[gpd.GeoDataFrame, List[pd.DataFrame]]:
+    # right now, oid literal cannot be changed
+    if oid != 'oid':
+        raise NotImplementedError("oid has to be the literal 'oid' and cannot be changed. This will change with a future version")
+    
+    # container for the output dataframes
+    output_dataframes = []
+
+    # aggregate the file over the oids to access the single groups
+    for oid, df in aggregates.groupby(oid):
+        # first reset the index and drop the oid column
+        data = df.reset_index().drop(oid, axis=1).copy()
+
+        # append to output
+        output_dataframes.append(data)
+
+    # if there is only exactly one value for each oid, we can
+    # directly join that to the segments
+    if aggregates.shape[0] == segments.shape[0]:
+        new_segments = segments.join(aggregates, on=oid)
+    else:
+        # build the aggregation dictionary use the suffix or mean
+        aggs = {col: col.split('_')[-1] if '_' in col or '_std' in col else 'mean' for col in df.columns}
+
+        # further aggregate the aggregates dict and joint to segments
+        new_segments = segments.join(df.groupby(oid).agg(aggs))
+        
+    # return the new structures
+    return new_segments, output_dataframes
