@@ -1,6 +1,7 @@
 geopandas
 rasterio
 rioxarray
+geocube
 scikit-gstat
 click
 typing_extensions
