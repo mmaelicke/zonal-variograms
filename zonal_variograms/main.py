@@ -1,4 +1,4 @@
-from typing import List, Tuple, Optional, Union, Literal
+from typing import List, Tuple, Optional, Union
 import warnings
 
 from tqdm import tqdm
@@ -97,7 +97,7 @@ def clip_features_from_dataset(
 
         # add all variables to the cube
         for var in clip.data_vars:
-            cube[var] = clip[var].copy()
+            cube[var] = clip[var]
 
         # return the cube
         return cube
