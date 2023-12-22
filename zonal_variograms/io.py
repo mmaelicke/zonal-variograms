@@ -3,7 +3,7 @@ Provide some basic input / output logic, primarily for the CLI.
 They are separated out here, if you would like to use them in your own scripts.
 
 """
-from typing import Union, Optional, Generator, List, Tuple
+from typing import Union, Optional, Iterator, List, Tuple
 from typing_extensions import Literal
 import warnings
 from pathlib import Path
@@ -39,7 +39,7 @@ def load_dataset(
     return raster
 
 
-def load_segments(path: str, crs: Optional[Union[int, CRS]]) -> Generator[Tuple[str, gpd.GeoDataFrame]]:
+def load_segments(path: str, crs: Optional[Union[int, CRS]]) -> Iterator[Tuple[str, gpd.GeoDataFrame]]:
     # load the segments
     layernames = [name for name in fiona.listlayers(path) if name != 'layer_styles']
     
