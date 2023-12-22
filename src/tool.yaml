@@ -1,0 +1,47 @@
+tools:
+  clip:
+    title: Clip netCDF by Vectors
+    description: |
+      Clip a RASTER netCDF file by a vector source. The resulting clips will have the same structure as the input netCDF file.
+      The output netCDF will be clipped along 2D coordinates, which are detected as a combination of (lon, lat), 
+      (longitude, latitude) or (x, y). The netCDF may also have a CRS definition as attribute in a 1D coordinate variable,
+      which does then index all data variables (ie. by CF convention). RASTER can also be supplied in other raster formats,
+      such as GeoTIFF. Other formats are not recommended.
+      For the SEGMENTS vector data source it is recommended to use a geopackage. Other formats are supported as well.
+      If the source holds more than one layer, the clipping will be performed for each layer individually.
+    parameters:
+      overlap:
+        type: boolean
+        default: false
+        description: Set this to True, if the SEGMENTS may overlap. Will be significantly slower.
+      crs:
+        type: integer
+        optional: true
+        description: This will force-overwirte the CRS of the input netCDF. This is especially useful, when it cannot be read automatically.
+      oid_column:
+        type: string
+        optional: true
+        description: | 
+          The name of the column in SEGMENTS that uniquely identifies the features. It is recommended to use an integer field.
+          If not supplied, the rownumber will be used. 
+          Note that the output files will be named after the OIDs.
+      use_oid:
+        type: integer
+        array: true
+        optional: true
+        description: | 
+          A list of OIDs that should exclusively be used for clipping. This does only work, if the OID column in SEGMENTS
+          is of type integer. If not supplied, all features will be used.
+    data:
+      raster:
+        description: The input netCDF or GeoTiff file to be clipped
+        extension: 
+          - nc
+          - tif
+          - tiff
+      segments:
+        decription: The SEGMENTS vector data source to clip the netCDF
+        extension:
+          - gpkg
+          - shp
+          - geojson

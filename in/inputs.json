@@ -1,0 +1,11 @@
+{
+    "clip": {
+        "parameters": {
+            "overlap": false
+        },
+        "data": {
+            "raster": "/in/raster.nc",
+            "segments": "/in/segments.gpkg"
+        }
+    }
+}

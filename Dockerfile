@@ -23,3 +23,9 @@ COPY README.md /tool/lib/README.md
 WORKDIR /tool/lib
 RUN pip install .
 
+# do the tool-spec specific setup
+COPY src /src
+WORKDIR /src
+
+CMD ["python", "run.py"]
+
