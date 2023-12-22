@@ -4,8 +4,8 @@
             "overlap": false
         },
         "data": {
-            "raster": "/in/raster.nc",
-            "segments": "/in/segments.gpkg"
+            "raster": "/in/era5-de-short.nc",
+            "segments": "/in/bundeslaender.gpkg"
         }
     }
 }
