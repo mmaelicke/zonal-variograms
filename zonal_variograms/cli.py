@@ -26,7 +26,7 @@ def clip_dataset(ctx, crs, oid, raster_backend, overlap, use_oid, save_path, ras
     try:
         raster = load_dataset(raster, crs=crs, raster_backend=raster_backend)
     except Exception as e:
-        raise click.ClickException from e
+        raise click.ClickException('Error loading RASTER.') from e
 
     # read the segments
     for layername, segment in load_segments(segments, crs=raster.rio.crs):
