@@ -77,7 +77,7 @@ def save_to_disk(
     base_path = Path(base_path).resolve() / layername
 
     # create the directory path
-    base_path.mkdir(parents=True, exists_ok=True)
+    base_path.mkdir(parents=True, exist_ok=True)
 
     # check if all data arguments are None (nothing to do)
     data_container = [clips, aggregates]
@@ -113,7 +113,7 @@ def save_to_disk(
                 fpath = base_path / oid
             else:
                 fpath = base_path
-            fpath.mkdir(parents=True, exists_ok=True)
+            fpath.mkdir(parents=True, exist_ok=True)
 
             # figure out the file name
             if file_name is None:
@@ -144,7 +144,7 @@ def save_to_disk(
                 fpath = base_path / oid
             else:
                 fpath = base_path
-            fpath.mkdir(parents=True, exists_ok=True)
+            fpath.mkdir(parents=True, exist_ok=True)
 
             # figure out the file name
             if file_name is None:

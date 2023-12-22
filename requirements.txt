@@ -2,6 +2,7 @@ geopandas
 rasterio
 rioxarray
 geocube
+cftime
 scikit-gstat
 click
 typing_extensions
