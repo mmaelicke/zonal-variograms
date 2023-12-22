@@ -2,7 +2,7 @@ ARG python_version=3.10
 FROM python:${python_version}
 
 # install requirements for tool-specs
-RUN pip install json2args==0.6.0
+RUN pip install json2args==0.6.1
 
 # build the structure
 RUN mkdir /in
@@ -21,10 +21,12 @@ COPY setup.py /tool/lib/setup.py
 COPY requirements.txt /tool/lib/requirements.txt
 COPY README.md /tool/lib/README.md
 WORKDIR /tool/lib
+RUN pip install -r requirements.txt
 RUN pip install .
 
 # do the tool-spec specific setup
 COPY src /src
+COPY in /in
 WORKDIR /src
 
 CMD ["python", "run.py"]
