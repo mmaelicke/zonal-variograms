@@ -13,7 +13,8 @@ import xarray as xr
 import geopandas as gpd
 import pandas as pd
 import fiona
-from pyproj import CRS
+from pyproj import CRS as pjCRS
+from rasterio.crs import CRS as rioCRS
 from fiona.errors import DriverError
 
 
@@ -21,7 +22,7 @@ from fiona.errors import DriverError
 def load_dataset(
     path: str, 
     crs: Optional[int] = None, 
-    raster_backend: Union[Literal['rio'], Literal['xarray']] = 'rio'
+    raster_backend: Union[Literal['rio'], Literal['xarray']] = 'xarray'
 ) -> xr.Dataset:
     # first try to open the raster
     try:
@@ -39,7 +40,7 @@ def load_dataset(
     return raster
 
 
-def load_segments(path: str, crs: Optional[Union[int, CRS]]) -> Iterator[Tuple[str, gpd.GeoDataFrame]]:
+def load_segments(path: str, crs: Optional[Union[int, pjCRS, rioCRS]]) -> Iterator[Tuple[str, gpd.GeoDataFrame]]:
     # load the segments
     layernames = [name for name in fiona.listlayers(path) if name != 'layer_styles']
     
@@ -52,10 +53,10 @@ def load_segments(path: str, crs: Optional[Union[int, CRS]]) -> Iterator[Tuple[s
 
             # check if we need to transform the crs
             if crs is not None:
-                if isinstance(crs, CRS):
+                if isinstance(crs, (pjCRS, rioCRS)):
                     features.to_crs(crs, inplace=True)
                 else:
-                    features.to_crs(CRS.from_epsg(crs), inplace=True)
+                    features.to_crs(pjCRS.from_epsg(crs), inplace=True)
         except DriverError:
             warnings.warn(f"Could not read layer {layername} in SEGMENTS {path}. Skipping layer.")
             continue
