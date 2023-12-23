@@ -28,7 +28,8 @@ def add_oid_overlay(raster: Dataset, features: gpd.GeoDataFrame, oid: str = 'oid
     cube = make_geocube(
         vector_data=features,
         measurements=[oid],
-        like=raster
+        like=raster,
+        interpolate_na_method='cubic'
     )
 
     # add all the variables from the raster to the cube
@@ -93,7 +94,7 @@ def clip_features_from_dataset(
             warnings.simplefilter("ignore", category=ShapeSkipWarning)
             
             # make a new geocube with the catchment in it
-            cube = make_geocube(features.where(features[oid] == _oid), measurements=[oid], like=clip)
+            cube = make_geocube(features.where(features[oid] == _oid), measurements=[oid], like=clip, interpolate_na_method='cubic')
 
         # add all variables to the cube
         for var in clip.data_vars:
@@ -102,13 +103,6 @@ def clip_features_from_dataset(
         # return the cube
         return cube
 
-    # check if we need to parallelize
-    if n_jobs is None:
-        n_jobs = 1
-    
-    # build the worker and delayed function
-    worker = Parallel(n_jobs=n_jobs, return_as='list' if quiet else 'generator')
-    delayed_handler = delayed(_handler)
     
     # set up the input parameters
     if use_oids is not None:
@@ -119,11 +113,24 @@ def clip_features_from_dataset(
     else:
         inputs = features[oid].values
 
-    # build the iterator
-    if quiet:
-        return list(worker(delayed_handler(_oid) for _oid in inputs))
+    # check if we need to parallelize
+    if n_jobs is None:
+        n_jobs = 1
+    
+        # build the worker and delayed function
+        worker = Parallel(n_jobs=n_jobs, return_as='list' if quiet else 'generator')
+        delayed_handler = delayed(_handler)
+        # build the iterator
+        if quiet:
+            return list(worker(delayed_handler(_oid) for _oid in inputs))
+        else:
+            return list(tqdm(worker(delayed_handler(_oid) for _oid in inputs)))
+    
     else:
-        return list(tqdm(worker(delayed_handler(_oid) for _oid in inputs)))
+        if quiet:
+            return [_handler(_oid) for _oid in inputs]
+        else:
+            return [_handler(_oid) for _oid in tqdm(inputs)]
 
 
 def univariate_by_oid(dataset: Dataset,  oid: str = 'oid') -> pd.DataFrame:
