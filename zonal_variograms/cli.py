@@ -30,6 +30,7 @@ def clip_dataset(ctx, crs, oid, raster_backend, overlap, use_oid, save_path, ras
 
     # read the segments
     for layername, segment in load_segments(segments, crs=raster.rio.crs):
+        click.echo(f"Using SEGEMENTS layer {layername} for clipping...")
         # add the OID column if needed
         if oid is None:
             segment['oid'] = range(len(segment))
@@ -46,8 +47,10 @@ def clip_dataset(ctx, crs, oid, raster_backend, overlap, use_oid, save_path, ras
             # clip the features
             clips = spread_oid_from_dataset(ds, oid=oid)
         
+        click.echo(f"Clipped {len(clips)}, saving... ")
         # finally save the clips
         save_to_disk(save_path, layername=layername, clips=clips, nested=True)
+        click.echo("Done.")
 
 
 # combine all commands into one cli
