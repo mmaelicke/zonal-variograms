@@ -53,11 +53,15 @@ def spread_oid_from_dataset(cube: Dataset, oid: str = 'oid') -> List[Dataset]:
         cube_slice = cube.where(cube.oid == oid)
 
         # dropna along all axes
+        clip = None
         for dim in cube_slice.dims.keys():
-            cube_slice.dropna(dim, how='all', inplace=True)
+            if clip is None:
+                clip = cube_slice.dropna(dim, how='all')
+            else:
+                clip = clip.dropna(dim, how='all')
         
         # append the cropped cube to the list
-        clip_datasets.append(cube_slice)
+        clip_datasets.append(clip)
     
     # return the list
     return clip_datasets
