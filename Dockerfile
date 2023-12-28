@@ -15,12 +15,6 @@ RUN pip install --upgrade pip
 RUN apt-get update && apt-get install -y gdal-bin libgdal-dev
 RUN pip install GDAL==$(gdal-config --version | awk -F'[.]' '{print $1"."$2}')
 
-# copy over the tool
-COPY zonal_variograms /tool/lib/zonal_variograms
-COPY setup.py /tool/lib/setup.py
-COPY requirements.txt /tool/lib/requirements.txt
-COPY README.md /tool/lib/README.md
-
 # install all dependencies with exact versions
 RUN pip install geopandas==0.14.1
 RUN pip install geocube==0.4.2
@@ -33,6 +27,12 @@ RUN pip install typing_extensions==4.9.0
 RUN pip install xarray==2023.12.0
 RUN pip install scipy==1.11.4
 RUN pip install joblib==1.3.2
+
+# copy over the tool
+COPY zonal_variograms /tool/lib/zonal_variograms
+COPY setup.py /tool/lib/setup.py
+COPY requirements.txt /tool/lib/requirements.txt
+COPY README.md /tool/lib/README.md
 
 # install the tool
 WORKDIR /tool/lib
