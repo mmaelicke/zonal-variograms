@@ -1,7 +1,8 @@
 {
     "clip": {
         "parameters": {
-            "overlap": false
+            "overlap": true,
+            "crs": 4326
         },
         "data": {
             "raster": "/in/era5-de-short.nc",

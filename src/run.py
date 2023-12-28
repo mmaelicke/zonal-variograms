@@ -4,7 +4,8 @@ import os
 from json2args import get_parameter
 from json2args.data import get_data_paths
 
-from zonal_variograms.cli import clip_dataset
+from zonal_variograms import main
+from zonal_variograms.io import load_dataset, load_segments, save_to_disk
 
 # this should be json2args one day
 def error(e: Exception):
@@ -28,23 +29,21 @@ if toolname.lower() == 'clip':
         print(str(e))
         sys.exit(1)
 
-    # build the command
-    command = []
-    if 'overlap' in params:
-        command.append('--overlap')
-    if 'crs' in params:
-        command.extend(['--crs', params['crs']])
-    if 'oid_column' in params:
-        command.extend(['--oid', params['oid_column']])
-    if 'use_oid' in params:
-        for oid in params['use_oid']:
-            command.extend(['--use-oid', oid])
+    # load the raster
+    raster = load_dataset(raster_path, crs=params.get('crs', None), raster_backend='xarray')
 
-    # finally add the raster and segments
-    command.extend([raster_path, segments_path])
+    # go for each row
+    for layername, segment in load_segments(segments_path, crs=raster.rio.crs):
+        print(f"Clipping layer {layername}...")
 
-    # run the click command directly
-    clip_dataset(command, standalone_mode=False)
+        clips = main.clip_features_from_dataset(raster, segment, use_oids=params.get('use_oid'), n_jobs=-1)
+
+        # save the clips
+        print(f"Clipped {len(clips)}, saving")
+
+        save_to_disk('/out/', layername=layername, clips=clips, nested=True)
+
+    print('\nAll done. Bye.')
 
 else:
     err = Exception(f'Unknown tool: {toolname}')
