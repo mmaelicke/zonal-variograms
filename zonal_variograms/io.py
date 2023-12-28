@@ -40,7 +40,7 @@ def load_dataset(
     return raster
 
 
-def load_segments(path: str, crs: Optional[Union[int, pjCRS, rioCRS]]) -> Iterator[Tuple[str, gpd.GeoDataFrame]]:
+def load_segments(path: str, crs: Optional[Union[int, pjCRS, rioCRS]] = None) -> Iterator[Tuple[str, gpd.GeoDataFrame]]:
     # load the segments
     layernames = [name for name in fiona.listlayers(path) if name != 'layer_styles']
     
