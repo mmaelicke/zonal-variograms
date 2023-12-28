@@ -1,7 +1,7 @@
 geopandas
+geocube
 rasterio
 rioxarray
-geocube
 cftime
 scikit-gstat
 click

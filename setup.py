@@ -29,7 +29,7 @@ setup(
     packages=find_packages(),
     entry_points={
         'console_scripts': [
-            'zonal_variograms = zonal_variograms.cli:process_segmented_files'
+            'zonal_variograms = zonal_variograms.cli:cli'
         ]
     }
 )
