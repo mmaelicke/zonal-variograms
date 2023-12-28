@@ -118,9 +118,7 @@ def clip_features_from_dataset(
         inputs = features[oid].values
 
     # check if we need to parallelize
-    if n_jobs is None:
-        n_jobs = 1
-    
+    if n_jobs is not None:
         # build the worker and delayed function
         worker = Parallel(n_jobs=n_jobs, return_as='list' if quiet else 'generator')
         delayed_handler = delayed(_handler)
