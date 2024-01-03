@@ -1,4 +1,4 @@
-from typing import List, Tuple, Optional, Union
+from typing import List, Tuple, Optional, Union, Callable
 import warnings
 
 from tqdm import tqdm
@@ -66,6 +66,9 @@ def spread_oid_from_dataset(cube: Dataset, oid: str = 'oid') -> List[Dataset]:
     # return the list
     return clip_datasets
 
+# define a helper to raise a passed exception
+def raise_exception(e: Exception) -> None:
+    raise e
 
 def clip_features_from_dataset(
     raster: Dataset,
@@ -73,7 +76,8 @@ def clip_features_from_dataset(
     oid: str = 'oid', 
     use_oids: Optional[Union[int, List[int]]] = None, 
     n_jobs: Optional[int] = None,
-    quiet: bool = False
+    quiet: bool = False,
+    on_error: Callable[[Exception], None] = raise_exception
 ) -> List[Dataset]:
     # make sure the Dataset has the rioxarray extension installed
     if not hasattr(raster, 'rio'):
@@ -89,24 +93,26 @@ def clip_features_from_dataset(
 
     # build a handler function to clip the featues at one index
     def _handler(_oid: Union[int, float]) -> Dataset:
-        geom = features.where(features[oid] == _oid).dropna().geometry.values.tolist()
-        clip = raster.copy().rio.clip(geom, features.crs, drop=True, invert=False)
+        try:
+            geom = features.where(features[oid] == _oid).dropna().geometry.values.tolist()
+            clip = raster.copy().rio.clip(geom, features.crs, drop=True, invert=False)
 
-        # make a geocube of only this feature
-        with warnings.catch_warnings():
-            # we expect skipped shapes here
-            warnings.simplefilter("ignore", category=ShapeSkipWarning)
-            
-            # make a new geocube with the catchment in it
-            cube = make_geocube(features.where(features[oid] == _oid), measurements=[oid], like=clip, interpolate_na_method='cubic')
+            # make a geocube of only this feature
+            with warnings.catch_warnings():
+                # we expect skipped shapes here
+                warnings.simplefilter("ignore", category=ShapeSkipWarning)
+                
+                # make a new geocube with the catchment in it
+                cube = make_geocube(features.where(features[oid] == _oid), measurements=[oid], like=clip, interpolate_na_method='cubic')
 
-        # add all variables to the cube
-        for var in clip.data_vars:
-            cube[var] = clip[var]
+            # add all variables to the cube
+            for var in clip.data_vars:
+                cube[var] = clip[var]
 
-        # return the cube
-        return cube
-
+            # return the cube
+            return cube
+        except Exception as e:
+            return on_error(e)
     
     # set up the input parameters
     if use_oids is not None:
